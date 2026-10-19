@@ -17,7 +17,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gomessguii/logger"
 	"github.com/joho/godotenv"
-	"go.mau.fi/whatsmeow"
 	"gorm.io/gorm"
 	_ "modernc.org/sqlite"
 
@@ -25,6 +24,7 @@ import (
 	call_service "github.com/evolution-foundation/evolution-go/pkg/call/service"
 	chat_handler "github.com/evolution-foundation/evolution-go/pkg/chat/handler"
 	chat_service "github.com/evolution-foundation/evolution-go/pkg/chat/service"
+	"github.com/evolution-foundation/evolution-go/pkg/clientregistry"
 	community_handler "github.com/evolution-foundation/evolution-go/pkg/community/handler"
 	community_service "github.com/evolution-foundation/evolution-go/pkg/community/service"
 	config "github.com/evolution-foundation/evolution-go/pkg/config"
@@ -83,8 +83,8 @@ func init() {
 }
 
 func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.Config, conn *amqp.Connection, exPath string, runtimeCtx *core.RuntimeContext) *gin.Engine {
-	killChannel := make(map[string](chan bool))
-	clientPointer := make(map[string]*whatsmeow.Client)
+	// Cliente de cada instância em execução, com trava (ver pkg/clientregistry).
+	registry := clientregistry.New()
 
 	loggerWrapper := logger_wrapper.NewLoggerManager(config)
 
@@ -168,8 +168,7 @@ func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.C
 		message_repository.NewMessageRepository(db),
 		labelRepository,
 		config,
-		killChannel,
-		clientPointer,
+		registry,
 		rabbitmqProducer,
 		webhookProducer,
 		websocketProducer,
@@ -181,21 +180,20 @@ func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.C
 	)
 	instanceService := instance_service.NewInstanceService(
 		instanceRepository,
-		killChannel,
-		clientPointer,
+		registry,
 		whatsmeowService,
 		config,
 		loggerWrapper,
 	)
-	sendMessageService := send_service.NewSendService(clientPointer, whatsmeowService, config, loggerWrapper)
-	userService := user_service.NewUserService(clientPointer, whatsmeowService, loggerWrapper)
-	messageService := message_service.NewMessageService(clientPointer, messageRepository, whatsmeowService, loggerWrapper)
-	chatService := chat_service.NewChatService(clientPointer, whatsmeowService, loggerWrapper)
-	groupService := group_service.NewGroupService(clientPointer, whatsmeowService, loggerWrapper)
-	callService := call_service.NewCallService(clientPointer, whatsmeowService, loggerWrapper)
-	communityService := community_service.NewCommunityService(clientPointer, whatsmeowService, loggerWrapper)
-	labelService := label_service.NewLabelService(clientPointer, whatsmeowService, labelRepository, loggerWrapper)
-	newsletterService := newsletter_service.NewNewsletterService(clientPointer, whatsmeowService, loggerWrapper)
+	sendMessageService := send_service.NewSendService(registry, whatsmeowService, config, loggerWrapper)
+	userService := user_service.NewUserService(registry, whatsmeowService, loggerWrapper)
+	messageService := message_service.NewMessageService(registry, messageRepository, whatsmeowService, loggerWrapper)
+	chatService := chat_service.NewChatService(registry, whatsmeowService, loggerWrapper)
+	groupService := group_service.NewGroupService(registry, whatsmeowService, loggerWrapper)
+	callService := call_service.NewCallService(registry, whatsmeowService, loggerWrapper)
+	communityService := community_service.NewCommunityService(registry, whatsmeowService, loggerWrapper)
+	labelService := label_service.NewLabelService(registry, whatsmeowService, labelRepository, loggerWrapper)
+	newsletterService := newsletter_service.NewNewsletterService(registry, whatsmeowService, loggerWrapper)
 
 	// NOVO: PollHandler usando PollService já inicializado no whatsmeowService (evita dupla inicialização)
 	pollHandler := poll_handler.NewPollHandler(whatsmeowService.GetPollService(), loggerWrapper)
