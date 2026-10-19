@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/evolution-foundation/evolution-go/pkg/clientregistry"
 	instance_model "github.com/evolution-foundation/evolution-go/pkg/instance/model"
 	logger_wrapper "github.com/evolution-foundation/evolution-go/pkg/logger"
 	whatsmeow_service "github.com/evolution-foundation/evolution-go/pkg/whatsmeow/service"
@@ -18,7 +19,7 @@ type CallService interface {
 }
 
 type callService struct {
-	clientPointer    map[string]*whatsmeow.Client
+	registry         *clientregistry.Registry
 	whatsmeowService whatsmeow_service.WhatsmeowService
 	loggerWrapper    *logger_wrapper.LoggerManager
 }
@@ -29,7 +30,7 @@ type RejectCallStruct struct {
 }
 
 func (c *callService) ensureClientConnected(instanceId string) (*whatsmeow.Client, error) {
-	client := c.clientPointer[instanceId]
+	client := c.registry.Client(instanceId)
 	c.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Checking client connection status - Client exists: %v", instanceId, client != nil)
 
 	if client == nil {
@@ -43,7 +44,7 @@ func (c *callService) ensureClientConnected(instanceId string) (*whatsmeow.Clien
 		c.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Instance started, waiting 2 seconds...", instanceId)
 		time.Sleep(2 * time.Second)
 
-		client = c.clientPointer[instanceId]
+		client = c.registry.Client(instanceId)
 		c.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Checking new client - Exists: %v, Connected: %v",
 			instanceId,
 			client != nil,
@@ -83,12 +84,12 @@ func (c *callService) RejectCall(data *RejectCallStruct, instance *instance_mode
 }
 
 func NewCallService(
-	clientPointer map[string]*whatsmeow.Client,
+	registry *clientregistry.Registry,
 	whatsmeowService whatsmeow_service.WhatsmeowService,
 	loggerWrapper *logger_wrapper.LoggerManager,
 ) CallService {
 	return &callService{
-		clientPointer:    clientPointer,
+		registry:         registry,
 		whatsmeowService: whatsmeowService,
 		loggerWrapper:    loggerWrapper,
 	}
