@@ -1,5 +1,37 @@
 # Evolution GO - Changelog
 
+## v0.7.4
+
+### 🐛 Fixes
+- **One instance can no longer crash the whole process.** The per-instance
+  client state (`killChannel`, `clientPointer`, `myClientPointer`) lived in plain
+  Go maps shared by every instance, with no lock. Concurrent reads and writes
+  ended in `fatal error: concurrent map read and map write`, which cannot be
+  recovered and took down every connection. It happened three times in
+  production (02/10, 16/10 and 17/10/2026). The state now lives in
+  `pkg/clientregistry`, behind a `sync.RWMutex`.
+- **Stopped control loops actually stop.** Each `StartClient` run owns its own
+  stop channel and waits on it; stopping closes the channel. Before, the loop
+  polled the map every second with `default`, the non-blocking kill sent by
+  `ReconnectClient` never met it, and every reconnect left one more loop alive
+  (591 at the 16/10 crash). Late events from an old client only stop that
+  client, never the current one.
+- **A logged-out instance stays stopped.** Stopping no longer restarts the
+  client. A device logout or an expired QR used to restart into QR mode
+  forever (4,087 QR codes in 100 minutes for one instance on 17/10).
+- **`Disconnected` only reconnects a paired client**, and only once per socket.
+- **A client that fails to connect is no longer kept as running**, so
+  `POST /instance/connect` starts a fresh one instead of answering
+  "Instance already running".
+- **`forcereconnect` starts exactly one client.** It used to swap the kill
+  channel before signalling, so the old loop restarted too.
+
+### ⚠️ Behavior changes
+- `POST /instance/disconnect` now stops the client. It used to restart it,
+  through the kill branch.
+- After a logout, the instance waits for `POST /instance/connect` to show a
+  new QR, instead of rotating QR codes on its own.
+
 ## v0.7.2
 
 **Docker:** `evoapicloud/evolution-go:0.7.2`
