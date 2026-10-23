@@ -25,6 +25,7 @@ import (
 	config "github.com/evolution-foundation/evolution-go/pkg/config"
 	instance_model "github.com/evolution-foundation/evolution-go/pkg/instance/model"
 	logger_wrapper "github.com/evolution-foundation/evolution-go/pkg/logger"
+	"github.com/evolution-foundation/evolution-go/pkg/safehttp"
 	"github.com/evolution-foundation/evolution-go/pkg/utils"
 	whatsmeow_service "github.com/evolution-foundation/evolution-go/pkg/whatsmeow/service"
 	"github.com/gabriel-vasile/mimetype"
@@ -657,7 +658,7 @@ func (s *sendService) sendTextWithRetry(data *TextStruct, instance *instance_mod
 }
 
 func fetchLinkMetadata(url string) (string, string, string, error) {
-	resp, err := http.Get(url)
+	resp, err := safehttp.Get(url)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -741,7 +742,7 @@ func (s *sendService) sendLinkWithRetry(data *LinkStruct, instance *instance_mod
 
 		var fileData []byte
 		if data.ImgUrl != "" {
-			resp, err := http.Get(data.ImgUrl)
+			resp, err := safehttp.Get(data.ImgUrl)
 			if err != nil {
 				if attempt == maxRetries {
 					return nil, err
@@ -749,7 +750,10 @@ func (s *sendService) sendLinkWithRetry(data *LinkStruct, instance *instance_mod
 				continue
 			}
 			defer resp.Body.Close()
-			fileData, _ = io.ReadAll(resp.Body)
+			// Miniatura cortada pelo limite iria corrompida; sem ela a prévia sai só com texto.
+			if fileData, err = io.ReadAll(resp.Body); err != nil {
+				fileData = nil
+			}
 		}
 
 		previewType := waE2E.ExtendedTextMessage_VIDEO
@@ -1239,7 +1243,7 @@ func (s *sendService) sendMediaUrlWithRetry(data *MediaStruct, instance *instanc
 
 		s.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Iniciando download da URL: %s", instance.Id, data.Url)
 
-		resp, err := http.Get(data.Url)
+		resp, err := safehttp.Get(data.Url)
 		if err != nil {
 			return nil, err
 		}
@@ -1582,7 +1586,7 @@ func convertToWebP(imageData string) ([]byte, error) {
 	var img image.Image
 	var err error
 
-	resp, err := http.Get(imageData)
+	resp, err := safehttp.Get(imageData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch image from URL: %v", err)
 	}
@@ -1878,7 +1882,7 @@ func (s *sendService) SendButton(data *ButtonStruct, instance *instance_model.In
 
 		// Optional media header (image or video URL).
 		if data.ImageUrl != "" {
-			if resp, err := http.Get(data.ImageUrl); err == nil {
+			if resp, err := safehttp.Get(data.ImageUrl); err == nil {
 				fileData, readErr := io.ReadAll(resp.Body)
 				resp.Body.Close()
 				if readErr == nil {
@@ -1899,7 +1903,7 @@ func (s *sendService) SendButton(data *ButtonStruct, instance *instance_model.In
 				}
 			}
 		} else if data.VideoUrl != "" {
-			if resp, err := http.Get(data.VideoUrl); err == nil {
+			if resp, err := safehttp.Get(data.VideoUrl); err == nil {
 				fileData, readErr := io.ReadAll(resp.Body)
 				resp.Body.Close()
 				if readErr == nil {
@@ -2946,7 +2950,7 @@ func (s *sendService) SendCarousel(data *CarouselStruct, instance *instance_mode
 
 			if card.Header.ImageUrl != "" {
 				// Download image
-				resp, err := http.Get(card.Header.ImageUrl)
+				resp, err := safehttp.Get(card.Header.ImageUrl)
 				if err == nil {
 					defer resp.Body.Close()
 					fileData, err := io.ReadAll(resp.Body)
@@ -2974,7 +2978,7 @@ func (s *sendService) SendCarousel(data *CarouselStruct, instance *instance_mode
 				}
 			} else if card.Header.VideoUrl != "" {
 				// Download and upload video
-				resp, err := http.Get(card.Header.VideoUrl)
+				resp, err := safehttp.Get(card.Header.VideoUrl)
 				if err == nil {
 					defer resp.Body.Close()
 					fileData, err := io.ReadAll(resp.Body)
