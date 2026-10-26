@@ -156,7 +156,7 @@ func (c *Config) CreateUsersDB() (*gorm.DB, error) {
 
 	db, err := gorm.Open(
 		postgres.Open(dbDSN),
-		&gorm.Config{},
+		&gorm.Config{Logger: dbLogger(os.Stdout)},
 	)
 	if err != nil {
 		return nil, err
