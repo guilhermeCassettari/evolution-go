@@ -54,14 +54,14 @@ func (p *webhookProducer) sendWebhookWithRetry(url string, body []byte, maxRetri
 	for i := 0; i < maxRetries; i++ {
 		err, responseBody, statusCode := p.sendWebhook(url, body, userID)
 		if err == nil {
-			p.loggerWrapper.GetLogger(userID).LogInfo("[%s] webhook sent successfully - url: %s, status: %d, response: %s", userID, url, statusCode, string(responseBody))
+			p.loggerWrapper.GetLogger(userID).LogInfo("[%s] webhook sent successfully - url: %s, status: %d, response: %s", userID, logger_wrapper.SemQuery(url), statusCode, string(responseBody))
 			return
 		}
-		p.loggerWrapper.GetLogger(userID).LogWarn("[%s] webhook failed - url: %s, attempt: %d, error: %v", userID, url, i+1, err)
+		p.loggerWrapper.GetLogger(userID).LogWarn("[%s] webhook failed - url: %s, attempt: %d, error: %v", userID, logger_wrapper.SemQuery(url), i+1, err)
 
 		time.Sleep(retryInterval)
 	}
-	p.loggerWrapper.GetLogger(userID).LogError("[%s] webhook failed after maximum retries - url: %s", userID, url)
+	p.loggerWrapper.GetLogger(userID).LogError("[%s] webhook failed after maximum retries - url: %s", userID, logger_wrapper.SemQuery(url))
 }
 
 func (p *webhookProducer) sendWebhook(url string, body []byte, userID string) (error, []byte, int) {

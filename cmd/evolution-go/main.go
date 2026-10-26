@@ -198,7 +198,9 @@ func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.C
 	// NOVO: PollHandler usando PollService já inicializado no whatsmeowService (evita dupla inicialização)
 	pollHandler := poll_handler.NewPollHandler(whatsmeowService.GetPollService(), loggerWrapper)
 
-	r := gin.Default()
+	// gin.Default() sem o logger padrão, que imprime a query string (o /ws recebe a chave por ela).
+	r := gin.New()
+	r.Use(gin.LoggerWithFormatter(logger_wrapper.FormatoDeAcesso), gin.Recovery())
 
 	// CORS middleware — must be before everything else
 	r.Use(func(c *gin.Context) {
