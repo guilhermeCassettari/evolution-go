@@ -1637,7 +1637,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 							// Continue processing without storage URL
 							mycli.loggerWrapper.GetLogger(mycli.userID).LogWarn("[%s] Continuing message processing without S3 URL - ID: %s", mycli.userID, evt.Info.ID)
 						} else {
-							mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] S3/Minio upload successful - ID: %s, Size: %d bytes, Duration: %v, URL: %s", mycli.userID, evt.Info.ID, len(data), storageDuration, mediaURL)
+							mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] S3/Minio upload successful - ID: %s, Size: %d bytes, Duration: %v, URL: %s", mycli.userID, evt.Info.ID, len(data), storageDuration, logger_wrapper.SemQuery(mediaURL))
 							messageMap["mediaUrl"] = mediaURL
 							messageMap["mimetype"] = mimeType
 						}
