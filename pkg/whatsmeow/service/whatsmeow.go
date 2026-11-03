@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image/png"
 	"io"
@@ -71,6 +72,11 @@ type WhatsmeowService interface {
 	ConfirmPasskey(instanceId string) error
 }
 
+const (
+	motivoClientOutdated = "Client outdated (405)"
+	motivoCATRecusado    = "CAT refresh not available"
+)
+
 type clientVersion struct {
 	Major int
 	Minor int
@@ -99,6 +105,8 @@ type whatsmeowService struct {
 }
 
 type MyClient struct {
+	// A versão com que esta conexão foi aberta, para saber se o 405 foi para ela.
+	versaoNaConexao    store.WAVersionContainer
 	service            WhatsmeowService
 	WAClient           *whatsmeow.Client
 	eventHandlerID     uint32
@@ -377,7 +385,7 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 	store.DeviceProps.Os = &cd.Instance.OsName
 	store.DeviceProps.RequireFullSync = proto.Bool(true)
 
-	if w.config.WhatsappVersionMajor != 0 && w.config.WhatsappVersionMinor != 0 && w.config.WhatsappVersionPatch != 0 {
+	if versaoFixadaPorConfiguracao(w.config) {
 		w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] Setting whatsapp version to %d.%d.%d", cd.Instance.Id, w.config.WhatsappVersionMajor, w.config.WhatsappVersionMinor, w.config.WhatsappVersionPatch)
 		version.Major = w.config.WhatsappVersionMajor
 		if err == nil {
@@ -463,10 +471,10 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		}
 	}
 
-	client.EnableAutoReconnect = false
-	client.AutoTrustIdentity = true
+	configurarClienteWhatsApp(client)
 
 	mycli := &MyClient{
+		versaoNaConexao:    store.GetWAVersion(),
 		service:            &w,
 		Instance:           cd.Instance,
 		WAClient:           client,
@@ -2077,6 +2085,13 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 				mycli.loggerWrapper.GetLogger(instanceID).LogError("[%s] Failed to restart instance: %v", instanceID, err)
 			}
 		}(mycli.userID)
+	case *events.ClientOutdated:
+		go mycli.tratarClientOutdated()
+		return
+	case *events.CATRefreshError:
+		mycli.loggerWrapper.GetLogger(mycli.userID).LogError("[%s] WhatsApp pediu renovação de CAT, que este cliente não tem: %v", mycli.userID, evt.Error)
+		mycli.marcarForaDoAr(motivoCATRecusado)
+		return
 	case *events.LabelEdit:
 		doWebhook = true
 		postMap["event"] = "LabelEdit"
@@ -2695,6 +2710,17 @@ var (
 	cachedWebVersionAt time.Time
 	cachedWebVersionMu sync.Mutex
 	webVersionCacheTTL = 1 * time.Hour
+
+	webVersionFalhouEm time.Time
+	// Quanto esperar para ir à web de novo depois de uma falha.
+	webVersionEsperaAposFalha = 1 * time.Minute
+	// Menor intervalo entre buscas forçadas.
+	webVersionIntervaloMinimo = 1 * time.Minute
+	webVersionURL             = "https://web.whatsapp.com/sw.js"
+	webVersionHTTP            = &http.Client{Timeout: 10 * time.Second}
+
+	errBuscaDeVersaoEmEspera = errors.New("busca da versão do WhatsApp Web falhou há pouco; aguardando para tentar de novo")
+	errCATIndisponivel       = errors.New("CAT não se aplica a este cliente")
 )
 
 // waVersionMu protege a versão, que é global no whatsmeow: as instâncias sobem em paralelo.
@@ -2715,14 +2741,45 @@ func aplicarVersaoWhatsApp(v clientVersion) {
 }
 
 func fetchWhatsAppWebVersion() (*clientVersion, error) {
+	return buscarVersaoWeb(false)
+}
+
+// buscarVersaoWeb devolve a versão publicada no WhatsApp Web. O mutex fica preso
+// durante a busca, então ela precisa de timeout e não insiste logo depois de
+// falhar: com a web fora, cada instância da fila esperaria o timeout inteiro.
+//
+// forcar ignora o cache de 1 h, para quando o WhatsApp acabou de recusar a versão.
+// Todas as instâncias recebem o 405 juntas, então só uma vai à web por minuto.
+func buscarVersaoWeb(forcar bool) (*clientVersion, error) {
 	cachedWebVersionMu.Lock()
 	defer cachedWebVersionMu.Unlock()
 
-	if cachedWebVersion != nil && time.Since(cachedWebVersionAt) < webVersionCacheTTL {
+	validade := webVersionCacheTTL
+	if forcar {
+		validade = webVersionIntervaloMinimo
+	}
+	if cachedWebVersion != nil && time.Since(cachedWebVersionAt) < validade {
 		return cachedWebVersion, nil
 	}
 
-	resp, err := http.Get("https://web.whatsapp.com/sw.js")
+	if !webVersionFalhouEm.IsZero() && time.Since(webVersionFalhouEm) < webVersionEsperaAposFalha {
+		return nil, errBuscaDeVersaoEmEspera
+	}
+
+	versao, err := baixarVersaoWeb()
+	if err != nil {
+		webVersionFalhouEm = time.Now()
+		return nil, err
+	}
+
+	webVersionFalhouEm = time.Time{}
+	cachedWebVersion = versao
+	cachedWebVersionAt = time.Now()
+	return versao, nil
+}
+
+func baixarVersaoWeb() (*clientVersion, error) {
+	resp, err := webVersionHTTP.Get(webVersionURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch WhatsApp Web version: %v", err)
 	}
@@ -2755,13 +2812,11 @@ func fetchWhatsAppWebVersion() (*clientVersion, error) {
 
 			// Log qual padrão funcionou
 			if clientRevision > 0 {
-				cachedWebVersion = &clientVersion{
+				return &clientVersion{
 					Major: 2,
 					Minor: 3000,
 					Patch: clientRevision,
-				}
-				cachedWebVersionAt = time.Now()
-				return cachedWebVersion, nil
+				}, nil
 			}
 		}
 	}
@@ -2774,6 +2829,95 @@ func fetchWhatsAppWebVersion() (*clientVersion, error) {
 	}
 
 	return nil, fmt.Errorf("could not find client revision in the fetched content. Content preview: %s", content)
+}
+
+// limparCacheDeVersaoWeb esquece a versão e a última falha.
+func limparCacheDeVersaoWeb() {
+	cachedWebVersionMu.Lock()
+	defer cachedWebVersionMu.Unlock()
+
+	cachedWebVersion = nil
+	cachedWebVersionAt = time.Time{}
+	webVersionFalhouEm = time.Time{}
+}
+
+func versaoFixadaPorConfiguracao(cfg *config.Config) bool {
+	return cfg.WhatsappVersionMajor != 0 && cfg.WhatsappVersionMinor != 0 && cfg.WhatsappVersionPatch != 0
+}
+
+// atualizarVersaoAposClientOutdated busca de novo a versão publicada, sem o cache,
+// e a aplica. Versão fixada por configuração é escolha de quem configurou.
+func atualizarVersaoAposClientOutdated(cfg *config.Config) (store.WAVersionContainer, error) {
+	if versaoFixadaPorConfiguracao(cfg) {
+		return store.GetWAVersion(), nil
+	}
+
+	versao, err := buscarVersaoWeb(true)
+	if err != nil {
+		return store.GetWAVersion(), err
+	}
+
+	aplicarVersaoWhatsApp(*versao)
+	return store.GetWAVersion(), nil
+}
+
+// deveReconectarAposClientOutdated só autoriza com versão nova: repetir a recusada
+// só insiste no WhatsApp. Sem versão nova, quem tenta de novo é o religamento do
+// backend, com espera entre as tentativas.
+func deveReconectarAposClientOutdated(usada, atual store.WAVersionContainer) bool {
+	return usada != atual
+}
+
+// tratarClientOutdated reage ao 405. Sem isto, em 02/11/2026 as instâncias ficaram
+// paradas em "Reconnecting" até alguém religar à mão, 12 horas depois.
+func (mycli *MyClient) tratarClientOutdated() {
+	logger := mycli.loggerWrapper.GetLogger(mycli.userID)
+	logger.LogError("[%s] WhatsApp recusou a versão %s (405)", mycli.userID, mycli.versaoNaConexao.String())
+	mycli.marcarForaDoAr(motivoClientOutdated)
+
+	if !mycli.registry.IsCurrent(mycli.execution) {
+		return
+	}
+
+	atual, err := atualizarVersaoAposClientOutdated(mycli.config)
+	if err != nil {
+		logger.LogError("[%s] Falha ao buscar a versão depois do 405: %v", mycli.userID, err)
+		return
+	}
+	if !deveReconectarAposClientOutdated(mycli.versaoNaConexao, atual) {
+		logger.LogWarn("[%s] Sem versão nova depois do 405: a %s é a mais recente", mycli.userID, atual.String())
+		return
+	}
+
+	logger.LogInfo("[%s] Reconectando com a versão %s", mycli.userID, atual.String())
+	if err := mycli.service.ReconnectClient(mycli.userID); err != nil {
+		logger.LogError("[%s] Falha ao reconectar depois do 405: %v", mycli.userID, err)
+	}
+}
+
+func (mycli *MyClient) marcarForaDoAr(motivo string) {
+	mycli.Instance.DisconnectReason = motivo
+	mycli.Instance.Connected = false
+	if err := mycli.instanceRepository.UpdateConnected(mycli.Instance.Id, false, motivo); err != nil {
+		mycli.loggerWrapper.GetLogger(mycli.userID).LogError("[%s] Error updating instance: %s", mycli.userID, err)
+	}
+}
+
+// configurarClienteWhatsApp reúne as opções da biblioteca.
+//
+// UseRetryMessageStore fica desligado de propósito: ele grava as mensagens enviadas
+// em texto puro no banco por 7 dias.
+func configurarClienteWhatsApp(client *whatsmeow.Client) {
+	client.EnableAutoReconnect = false
+	client.AutoTrustIdentity = true
+	// Pede ao celular a mensagem que não chegou aos aparelhos conectados.
+	client.AutomaticMessageRerequestFromPhone = true
+	// A biblioteca chama RefreshCAT sem checar nulo quando o WhatsApp responde 413 ou
+	// 414. O panic derrubaria o processo, e com ele todas as instâncias. CAT só existe
+	// no Messenger: o erro faz a biblioteca desconectar, sem panic.
+	client.RefreshCAT = func(context.Context) error {
+		return errCATIndisponivel
+	}
 }
 
 func (w whatsmeowService) UpdateInstanceSettings(instanceId string) error {
