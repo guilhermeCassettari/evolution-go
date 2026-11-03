@@ -3,6 +3,8 @@ package utils
 import (
 	"strings"
 	"testing"
+
+	whatsmeow_types "go.mau.fi/whatsmeow/types"
 )
 
 func TestCreateJID(t *testing.T) {
@@ -382,5 +384,29 @@ func TestCanonicalJID(t *testing.T) {
 				t.Errorf("CanonicalJID for input %q still has '+' in User: %q", tt.input, canonical.User)
 			}
 		})
+	}
+}
+
+// Depois da atualização do whatsmeow, IsOnWhatsApp devolve o LID em JID e o telefone
+// em PhoneNumber. O FastChat localiza o contato pelo número: com o LID, o eco do envio
+// ia para a quarentena e a mensagem não entrava no ticket.
+func TestJIDDoNumeroPrefereOTelefone(t *testing.T) {
+	telefone := whatsmeow_types.NewJID("5514999999999", whatsmeow_types.DefaultUserServer)
+	lid := whatsmeow_types.NewJID("123456789012345", whatsmeow_types.HiddenUserServer)
+
+	got := JIDDoNumero(whatsmeow_types.IsOnWhatsAppResponse{JID: lid, PhoneNumber: telefone, IsIn: true})
+
+	if got != telefone {
+		t.Fatalf("JIDDoNumero = %s", got)
+	}
+}
+
+func TestJIDDoNumeroSemTelefoneUsaOJID(t *testing.T) {
+	jid := whatsmeow_types.NewJID("5514999999999", whatsmeow_types.DefaultUserServer)
+
+	got := JIDDoNumero(whatsmeow_types.IsOnWhatsAppResponse{JID: jid, IsIn: true})
+
+	if got != jid {
+		t.Fatalf("JIDDoNumero = %s", got)
 	}
 }

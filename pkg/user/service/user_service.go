@@ -243,10 +243,12 @@ func (u *userService) performCheckUser(client *whatsmeow.Client, numbers []strin
 	shouldRetry := false
 
 	for _, item := range resp {
+		jidDoNumero := utils.JIDDoNumero(item)
+
 		// Consultar LID Store para obter LID associado ao JID
 		var lidStr *string
 		if client.Store.LIDs != nil {
-			if lid, err := client.Store.LIDs.GetLIDForPN(context.TODO(), item.JID); err == nil && !lid.IsEmpty() {
+			if lid, err := client.Store.LIDs.GetLIDForPN(context.TODO(), jidDoNumero); err == nil && !lid.IsEmpty() {
 				lidString := fmt.Sprintf("%v", lid)
 				lidStr = &lidString
 			}
@@ -256,7 +258,7 @@ func (u *userService) performCheckUser(client *whatsmeow.Client, numbers []strin
 		remoteJID := item.Query // Default to original query
 		if item.IsIn {
 			// When user exists on WhatsApp, use the JID returned by WhatsApp
-			remoteJID = fmt.Sprintf("%v", item.JID)
+			remoteJID = fmt.Sprintf("%v", jidDoNumero)
 		} else if formatJid {
 			// If user not found and we used formatJid=true, we should retry with formatJid=false
 			shouldRetry = true
@@ -266,7 +268,7 @@ func (u *userService) performCheckUser(client *whatsmeow.Client, numbers []strin
 			var msg = User{
 				Query:        item.Query,
 				IsInWhatsapp: item.IsIn,
-				JID:          fmt.Sprintf("%v", item.JID),
+				JID:          fmt.Sprintf("%v", jidDoNumero),
 				RemoteJID:    remoteJID,
 				LID:          lidStr,
 				VerifiedName: item.VerifiedName.Details.GetVerifiedName(),
@@ -276,7 +278,7 @@ func (u *userService) performCheckUser(client *whatsmeow.Client, numbers []strin
 			var msg = User{
 				Query:        item.Query,
 				IsInWhatsapp: item.IsIn,
-				JID:          fmt.Sprintf("%v", item.JID),
+				JID:          fmt.Sprintf("%v", jidDoNumero),
 				RemoteJID:    remoteJID,
 				LID:          lidStr,
 				VerifiedName: "",

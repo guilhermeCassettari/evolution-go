@@ -651,3 +651,13 @@ func PrepareNumberForWhatsAppCheck(phone string, formatJid bool) (string, error)
 	}
 	return numbers[0], nil
 }
+
+// JIDDoNumero devolve o JID com o telefone quando a resposta de IsOnWhatsApp traz os dois:
+// JID pode ser o LID, e o FastChat localiza o contato pelo número. O whatsmeow troca para
+// LID sozinho ao enviar.
+func JIDDoNumero(item whatsmeow_types.IsOnWhatsAppResponse) whatsmeow_types.JID {
+	if !item.PhoneNumber.IsEmpty() {
+		return item.PhoneNumber
+	}
+	return item.JID
+}
