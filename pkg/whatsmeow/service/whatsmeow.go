@@ -391,6 +391,7 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		if err == nil {
 			store.DeviceProps.Version.Tertiary = proto.Uint32(uint32(version.Patch))
 		}
+		aplicarVersaoWhatsApp(version)
 	} else {
 		// Try to fetch version from WhatsApp Web
 		webVersion, err := fetchWhatsAppWebVersion()
@@ -402,6 +403,7 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 			store.DeviceProps.Version.Primary = proto.Uint32(uint32(version.Major))
 			store.DeviceProps.Version.Secondary = proto.Uint32(uint32(version.Minor))
 			store.DeviceProps.Version.Tertiary = proto.Uint32(uint32(version.Patch))
+			aplicarVersaoWhatsApp(version)
 		}
 	}
 
@@ -2694,6 +2696,23 @@ var (
 	cachedWebVersionMu sync.Mutex
 	webVersionCacheTTL = 1 * time.Hour
 )
+
+// waVersionMu protege a versão, que é global no whatsmeow: as instâncias sobem em paralelo.
+var waVersionMu sync.Mutex
+
+// aplicarVersaoWhatsApp leva a versão ao que o whatsmeow envia na conexão.
+// store.DeviceProps.Version não basta: a conexão usa store.GetWAVersion(), e a
+// versão fixa da biblioteca é recusada com 405 quando fica velha.
+func aplicarVersaoWhatsApp(v clientVersion) {
+	nova := store.WAVersionContainer{uint32(v.Major), uint32(v.Minor), uint32(v.Patch)}
+
+	waVersionMu.Lock()
+	defer waVersionMu.Unlock()
+
+	if store.GetWAVersion() != nova {
+		store.SetWAVersion(nova)
+	}
+}
 
 func fetchWhatsAppWebVersion() (*clientVersion, error) {
 	cachedWebVersionMu.Lock()
